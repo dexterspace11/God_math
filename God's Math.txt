@@ -1,0 +1,97 @@
+import pandas as pd
+import numpy as np
+from scipy.stats import pearsonr, entropy, kurtosis
+
+file_path = r"C:\Users\oliva\OneDrive\Documents\Excel doc\random.xlsx"
+
+# Load data
+df = pd.read_excel(file_path)
+data = df['random'].dropna().values.astype(float)
+n = len(data)
+
+print(f"Loaded {n} values. First: {data[0]:.1f} | Last: {data[-1]:.1f} | Mean: {np.mean(data):.1f}\n")
+
+if n < 2:
+    print("Not enough data.")
+else:
+    # ───────────────────────────────────────────────
+    # God's Order Metric (adapted for continuous data)
+    # ───────────────────────────────────────────────
+    # Bin data to create meaningful frequency distribution
+    n_bins = int(np.ceil(1 + np.log2(n)))          # Sturges' rule
+    hist, bin_edges = np.histogram(data, bins=n_bins)
+    counts = hist.astype(float)
+
+    freq = counts / n if n > 0 else np.array([])
+
+    # Normalized Entropy (on binned frequencies)
+    ent = entropy(freq) if len(freq) > 0 else 0
+    max_ent = np.log(len(counts)) if len(counts) > 1 else 0
+    norm_ent = ent / max_ent if max_ent > 0 else 1.0
+
+    # Autocorrelation lag-1 (raw series)
+    rho, _ = pearsonr(data[:-1], data[1:]) if n > 1 else (0.0, 0)
+
+    # Frequency variance ratio (on bin counts)
+    mean_count = np.mean(counts)
+    freq_var = np.var(counts) / mean_count if mean_count > 0 else 0.0
+
+    # Kurtosis of bin frequencies
+    kurt = kurtosis(counts) if len(counts) > 1 else 0
+    kurt_factor = 1 + abs(kurt)
+
+    # Final GOM (original formula - penalizes high persistence)
+    gom = (1 - norm_ent) * (1 - abs(rho)) * freq_var * kurt_factor
+
+    print("God's Order Metric (binned adaptation - original):")
+    print(f"  Bins used:           {n_bins}")
+    print(f"  NormEnt:             {norm_ent:.6f}   (lower = more structured distribution)")
+    print(f"  1 - |ρ|:             {(1 - abs(rho)):.6f}")
+    print(f"  FreqVar ratio:       {freq_var:.4f}")
+    print(f"  Kurtosis factor:     {kurt_factor:.4f}")
+    print(f"  GOM:                 {gom:.8f}")
+    print("  → Low when persistence is very high (as designed for discrete chaos detection)\n")
+
+    # ───────────────────────────────────────────────
+    # GOM Variant: Rewards high persistence (uses abs(ρ) instead)
+    # ───────────────────────────────────────────────
+    diffs = np.diff(data)  # compute here so it's available
+    kurt_diffs = kurtosis(diffs) if len(diffs) > 2 else 0
+    kurt_diffs_factor = 1 + abs(kurt_diffs)
+
+    gom_variant = (1 - norm_ent) * abs(rho) * freq_var * kurt_diffs_factor
+
+    print("GOM Variant (rewards high persistence / smooth order):")
+    print(f"  abs(ρ):              {abs(rho):.6f}   ← higher = stronger order")
+    print(f"  Kurtosis of diffs factor: {kurt_diffs_factor:.4f}")
+    print(f"  GOM_variant:         {gom_variant:.6f}")
+    print("  → Higher values flag strong deterministic smoothness/trending behavior")
+    print("  → Useful for time-series like yours where persistence is the main hidden order\n")
+
+    # ───────────────────────────────────────────────
+    # Time-series diagnostics
+    # ───────────────────────────────────────────────
+    # Linear trend
+    x = np.arange(n)
+    A = np.vstack([x, np.ones(n)]).T
+    m, c = np.linalg.lstsq(A, data, rcond=None)[0]
+
+    trend_start = c
+    trend_end = m * (n - 1) + c
+    print(f"Linear trend slope:      {m:.4f} per step")
+    print(f"  → Total change:        {trend_end - trend_start:.1f} over {n} steps")
+
+    # Residuals from linear trend
+    trend = c + m * x
+    residuals = data - trend
+    print(f"Residuals std:           {np.std(residuals):.2f}")
+    print(f"Autocorr of residuals (lag 1): {pearsonr(residuals[:-1], residuals[1:])[0]:.4f}")
+
+    # Differences (already computed above, just print stats)
+    print(f"Autocorr of differences (lag 1): {pearsonr(diffs[:-1], diffs[1:])[0]:.4f}  ← near 0 = random walk + drift like")
+
+    # Forecast reminder
+    print("\nForecast NEXT value (short-term):")
+    print(f"  • Persistence (last value)      : {data[-1]:.2f}")
+    print(f"  • Linear extrapolation          : {m * n + c:.2f}")
+    print(f"  • Blended (95% persistence)     : {0.95 * data[-1] + 0.05 * (m * n + c):.2f}  ← usually best here")
