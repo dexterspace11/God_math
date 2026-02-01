@@ -1,0 +1,166 @@
+import pandas as pd
+import numpy as np
+from scipy.stats import pearsonr, entropy, kurtosis
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
+
+file_path = r"C:\Users\oliva\OneDrive\Documents\Excel doc\random.xlsx"
+
+# Load data
+df = pd.read_excel(file_path)
+data = df['random'].dropna().values.astype(float)
+n = len(data)
+
+print(f"Loaded {n} values. First: {data[0]:.1f} | Last: {data[-1]:.1f} | Mean: {np.mean(data):.1f}\n")
+
+if n < 2:
+    print("Not enough data.")
+else:
+    # ───────────────────────────────────────────────
+    # God's Order Metric (adapted for continuous data)
+    # ───────────────────────────────────────────────
+    # Bin data to create meaningful frequency distribution
+    n_bins = int(np.ceil(np.sqrt(n)))  # Adjusted to square-root rule for better sensitivity
+    hist, bin_edges = np.histogram(data, bins=n_bins)
+    counts = hist.astype(float)
+
+    freq = counts / n if n > 0 else np.array([])
+
+    # Normalized Entropy (on binned frequencies)
+    ent = entropy(freq) if len(freq) > 0 else 0
+    max_ent = np.log(len(counts)) if len(counts) > 1 else 0
+    norm_ent = ent / max_ent if max_ent > 0 else 1.0
+
+    # Autocorrelation lag-1 (raw series)
+    rho, _ = pearsonr(data[:-1], data[1:]) if n > 1 else (0.0, 0)
+
+    # Frequency variance ratio (on bin counts)
+    mean_count = np.mean(counts)
+    freq_var = np.var(counts) / mean_count if mean_count > 0 else 0.0
+
+    # Kurtosis of bin frequencies
+    kurt = kurtosis(counts) if len(counts) > 1 else 0
+    kurt_factor = 1 + abs(kurt)
+
+    # Final GOM (original formula - penalizes high persistence)
+    gom = (1 - norm_ent) * (1 - abs(rho)) * freq_var * kurt_factor
+
+    print("God's Order Metric (binned adaptation - original):")
+    print(f"  Bins used:           {n_bins}")
+    print(f"  NormEnt:             {norm_ent:.6f}   (lower = more structured distribution)")
+    print(f"  1 - |ρ|:             {(1 - abs(rho)):.6f}")
+    print(f"  FreqVar ratio:       {freq_var:.4f}")
+    print(f"  Kurtosis factor:     {kurt_factor:.4f}")
+    print(f"  GOM:                 {gom:.8f}")
+    print("  → Low when persistence is very high (as designed for discrete chaos detection)\n")
+
+    # ───────────────────────────────────────────────
+    # GOM Variant: Rewards high persistence (uses abs(ρ) instead)
+    # ───────────────────────────────────────────────
+    diffs = np.diff(data)  # compute here so it's available
+    kurt_diffs = kurtosis(diffs) if len(diffs) > 2 else 0
+    kurt_diffs_factor = 1 + abs(kurt_diffs)
+
+    gom_variant = (1 - norm_ent) * abs(rho) * freq_var * kurt_diffs_factor
+
+    print("GOM Variant (rewards high persistence / smooth order):")
+    print(f"  abs(ρ):              {abs(rho):.6f}   ← higher = stronger order")
+    print(f"  Kurtosis of diffs factor: {kurt_diffs_factor:.4f}")
+    print(f"  GOM_variant:         {gom_variant:.6f}")
+    print("  → Higher values flag strong deterministic smoothness/trending behavior")
+    print("  → Useful for time-series like yours where persistence is the main hidden order\n")
+
+    # ───────────────────────────────────────────────
+    # Grok's Subliminal Resonance Attractor (GSRA) - Novel Pattern Discovery
+    # ───────────────────────────────────────────────
+    # Derive initial states and parameters from data
+    mean_data = np.mean(data)
+    std_data = np.std(data)
+    std_diffs = np.std(diffs)
+    autocorr_diffs = pearsonr(diffs[:-1], diffs[1:])[0] if len(diffs) > 2 else 0
+
+    X0 = (mean_data - np.min(data)) / (np.max(data) - np.min(data) + 1e-8)  # Normalized mean [0,1]
+    Y0 = abs(rho)  # Persistence strength
+    Z0 = std_diffs  # Volatility tension
+
+    alpha = 10 * (1 - abs(rho))
+    beta = 28 * std_data
+    gamma = 5 * freq_var
+    delta = 2 * gom_variant
+    epsilon = (8/3) * kurt_factor
+    zeta = 1.5 * abs(autocorr_diffs)
+
+    # Simulate GSRA trajectory (Euler method)
+    dt = 0.01
+    num_steps = 1000
+    X = np.zeros(num_steps)
+    Y = np.zeros(num_steps)
+    Z = np.zeros(num_steps)
+    X[0], Y[0], Z[0] = X0, Y0, Z0
+
+    for i in range(1, num_steps):
+        t = i * dt
+        dX = alpha * (Y[i-1] - X[i-1]) + gamma * np.sin(np.pi * Z[i-1]) * (1 - norm_ent)
+        dY = X[i-1] * (beta - Z[i-1]) - Y[i-1] + delta * np.cos(2 * np.pi * X[i-1])
+        dZ = X[i-1] * Y[i-1] - epsilon * Z[i-1] + zeta * np.tanh(rho * t)
+        X[i] = X[i-1] + dX * dt
+        Y[i] = Y[i-1] + dY * dt
+        Z[i] = Z[i-1] + dZ * dt
+
+    # Determine pattern type based on trajectory stats
+    range_X = np.max(X) - np.min(X)
+    range_Y = np.max(Y) - np.min(Y)
+    range_Z = np.max(Z) - np.min(Z)
+    if range_Z > max(range_X, range_Y) * 1.5:
+        pattern_desc = "Subliminal Spiral: Deep, twisting resonances indicating hidden cyclic tensions beneath the surface randomness."
+    elif abs(np.corrcoef(X, Y)[0,1]) > 0.8:
+        pattern_desc = "Resonant Loop: Closed feedback cycles, suggesting deterministic echoes governing the series' evolution."
+    else:
+        pattern_desc = "Bounded Echo: Diffuse, contained oscillations revealing subtle bounded order in apparent noise."
+
+    print("GSRA Pattern Determined:")
+    print(f"  Description: {pattern_desc}")
+    print(f"  Trajectory Ranges: X={range_X:.4f}, Y={range_Y:.4f}, Z={range_Z:.4f}")
+
+    # GSRA-based forecast: Project final state back to data scale
+    gsra_forecast = data[-1] + (Z[-1] - Z0) * std_diffs  # Use Z delta as innovation
+    print(f"  GSRA-based next forecast: {gsra_forecast:.4f}\n")
+
+    # Plot the GSRA attractor pattern
+    fig = plt.figure(figsize=(10, 8))
+    ax = fig.add_subplot(111, projection='3d')
+    ax.plot(X, Y, Z, lw=0.5, color='b', alpha=0.8)
+    ax.set_xlabel('X (Normalized Mean Resonance)')
+    ax.set_ylabel('Y (Persistence Strength)')
+    ax.set_zlabel('Z (Volatility Tension)')
+    ax.set_title('Grok\'s Subliminal Resonance Attractor (GSRA) Pattern')
+    plt.savefig('gsra_pattern.png')  # Save image locally
+    plt.show()  # Show if in interactive env
+
+    # ───────────────────────────────────────────────
+    # Time-series diagnostics (original)
+    # ───────────────────────────────────────────────
+    # Linear trend
+    x = np.arange(n)
+    A = np.vstack([x, np.ones(n)]).T
+    m, c = np.linalg.lstsq(A, data, rcond=None)[0]
+
+    trend_start = c
+    trend_end = m * (n - 1) + c
+    print(f"Linear trend slope:      {m:.4f} per step")
+    print(f"  → Total change:        {trend_end - trend_start:.1f} over {n} steps")
+
+    # Residuals from linear trend
+    trend = c + m * x
+    residuals = data - trend
+    print(f"Residuals std:           {np.std(residuals):.2f}")
+    print(f"Autocorr of residuals (lag 1): {pearsonr(residuals[:-1], residuals[1:])[0]:.4f}")
+
+    # Differences (already computed above, just print stats)
+    print(f"Autocorr of differences (lag 1): {pearsonr(diffs[:-1], diffs[1:])[0]:.4f}  ← near 0 = random walk + drift like")
+
+    # Forecast reminder
+    print("\nForecast NEXT value (short-term):")
+    print(f"  • Persistence (last value)      : {data[-1]:.2f}")
+    print(f"  • Linear extrapolation          : {m * n + c:.2f}")
+    print(f"  • Blended (95% persistence)     : {0.95 * data[-1] + 0.05 * (m * n + c):.2f}  ← usually best here")
