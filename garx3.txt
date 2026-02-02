@@ -1,0 +1,196 @@
+import pandas as pd
+import numpy as np
+from scipy.stats import pearsonr, entropy, kurtosis
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
+
+file_path = r"C:\Users\oliva\OneDrive\Documents\Excel doc\random.xlsx"
+
+df = pd.read_excel(file_path)
+data = df['random'].dropna().values.astype(float)
+n = len(data)
+
+print(f"Loaded {n} values. First: {data[0]:.1f} | Last: {data[-1]:.1f} | Mean: {np.mean(data):.1f}\n")
+
+if n < 2:
+    print("Not enough data.")
+else:
+    # ───────────────────────────────────────────────
+    # God's Order Metric (adapted for continuous data)
+    # ───────────────────────────────────────────────
+    n_bins = int(np.ceil(np.sqrt(n)))
+    hist, _ = np.histogram(data, bins=n_bins)
+    counts = hist.astype(float)
+    freq = counts / n if n > 0 else np.array([])
+    ent = entropy(freq) if len(freq) > 0 and np.all(freq >= 0) else 0
+    max_ent = np.log(len(counts)) if len(counts) > 1 else 0
+    norm_ent = ent / max_ent if max_ent > 0 else 1.0
+
+    rho, _ = pearsonr(data[:-1], data[1:]) if n > 1 else (0.0, 0)
+
+    mean_count = np.mean(counts) if len(counts) > 0 else 0
+    freq_var = np.var(counts) / mean_count if mean_count > 0 else 0.0
+
+    kurt = kurtosis(counts) if len(counts) > 1 else 0
+    kurt_factor = 1 + abs(kurt)
+
+    gom = (1 - norm_ent) * (1 - abs(rho)) * freq_var * kurt_factor
+
+    print("God's Order Metric (binned adaptation - original):")
+    print(f"  Bins used:           {n_bins}")
+    print(f"  NormEnt:             {norm_ent:.6f}")
+    print(f"  1 - |ρ|:             {(1 - abs(rho)):.6f}")
+    print(f"  FreqVar ratio:       {freq_var:.4f}")
+    print(f"  Kurtosis factor:     {kurt_factor:.4f}")
+    print(f"  GOM:                 {gom:.8f}\n")
+
+    diffs = np.diff(data)
+    kurt_diffs = kurtosis(diffs) if len(diffs) > 2 else 0
+    kurt_diffs_factor = 1 + abs(kurt_diffs)
+
+    gom_variant = (1 - norm_ent) * abs(rho) * freq_var * kurt_diffs_factor
+
+    print("GOM Variant (rewards high persistence):")
+    print(f"  abs(ρ):              {abs(rho):.6f}")
+    print(f"  Kurtosis of diffs factor: {kurt_diffs_factor:.4f}")
+    print(f"  GOM_variant:         {gom_variant:.6f}\n")
+
+    # ───────────────────────────────────────────────
+    # Garx's Subliminal Resonance Attractor (GSRA) - Stabilized
+    # ───────────────────────────────────────────────
+    mean_data = np.mean(data)
+    std_data = np.std(data)
+    std_diffs = np.std(diffs) if len(diffs) > 0 else 1.0
+    autocorr_diffs = pearsonr(diffs[:-1], diffs[1:])[0] if len(diffs) > 2 else 0.0
+
+    # Normalized & bounded initials
+    X0 = np.clip((mean_data - np.min(data)) / (np.max(data) - np.min(data) + 1e-8), 0.0, 1.0)
+    Y0 = np.clip(abs(rho), 0.0, 1.0)               # persistence usually |ρ| ≤ 1
+    Z0 = std_diffs / (std_data + 1e-8)             # normalize volatility ~ O(1)
+
+    # Reduced/scaled parameters to prevent explosion (classic Lorenz uses ~10,28,8/3)
+    alpha = 8.0 * (1 - abs(rho))                   # smaller than 10
+    beta  = 20.0                                   # fixed moderate value instead of 28*std
+    gamma = 0.5 * freq_var                         # heavily damped
+    delta = 0.3 * gom_variant                      # reduced influence
+    epsilon = 8.0 / 3.0                            # classic ~2.666, ignore kurt_factor scaling
+    zeta  = 0.4 * abs(autocorr_diffs)              # small time-dependent term
+
+    dt = 0.005                                     # smaller step size → better stability
+    num_steps = 2000                               # more steps but controlled
+    X = np.zeros(num_steps)
+    Y = np.zeros(num_steps)
+    Z = np.zeros(num_steps)
+    X[0], Y[0], Z[0] = X0, Y0, Z0
+
+    exploded = False
+    for i in range(1, num_steps):
+        t = i * dt
+        prev_X, prev_Y, prev_Z = X[i-1], Y[i-1], Z[i-1]
+
+        dX = alpha * (prev_Y - prev_X) + gamma * np.sin(np.pi * prev_Z) * (1 - norm_ent)
+        dY = prev_X * (beta - prev_Z) - prev_Y + delta * np.cos(2 * np.pi * prev_X)
+        dZ = prev_X * prev_Y - epsilon * prev_Z + zeta * np.tanh(rho * t)
+
+        X[i] = prev_X + dX * dt
+        Y[i] = prev_Y + dY * dt
+        Z[i] = prev_Z + dZ * dt
+
+        # Hard clip to prevent infinity/NaN
+        clip_val = 100.0
+        X[i] = np.clip(X[i], -clip_val, clip_val)
+        Y[i] = np.clip(Y[i], -clip_val, clip_val)
+        Z[i] = np.clip(Z[i], -clip_val, clip_val)
+
+        if not np.all(np.isfinite([X[i], Y[i], Z[i]])):
+            exploded = True
+            print("Warning: GSRA simulation became unstable (NaN/Inf detected). Using fallback.")
+            break
+
+    # Compute ranges safely
+    if exploded or not np.all(np.isfinite(X)) or not np.all(np.isfinite(Y)) or not np.all(np.isfinite(Z)):
+        range_X = range_Y = range_Z = np.nan
+        pattern_desc = "Unstable Trajectory: Simulation diverged – possible strong deterministic trend or parameter sensitivity."
+    else:
+        range_X = np.ptp(X)
+        range_Y = np.ptp(Y)
+        range_Z = np.ptp(Z)
+        if np.isnan(range_Z) or range_Z > max(range_X, range_Y) * 1.5:
+            pattern_desc = "Subliminal Spiral: Deep, twisting resonances indicating hidden cyclic tensions."
+        elif abs(np.corrcoef(X, Y)[0,1]) > 0.8:
+            pattern_desc = "Resonant Loop: Closed feedback cycles, suggesting deterministic echoes."
+        else:
+            pattern_desc = "Bounded Echo: Diffuse, contained oscillations revealing subtle bounded order."
+
+    print("GSRA Pattern Determined:")
+    print(f"  Description: {pattern_desc}")
+    print(f"  Trajectory Ranges: X={range_X:.4f}, Y={range_Y:.4f}, Z={range_Z:.4f}")
+
+    if np.all(np.isfinite([Z[-1], Z0, std_diffs])):
+        gsra_forecast = data[-1] + (Z[-1] - Z0) * std_diffs
+        print(f"  GSRA-based next forecast: {gsra_forecast:.4f}")
+    else:
+        gsra_forecast = data[-1]
+        print("  GSRA-based next forecast: fallback to last value (simulation unstable)")
+
+    print()
+
+    # ───────────────────────────────────────────────
+    # Simple Static Artistic 3D Image (with safety checks)
+    # ───────────────────────────────────────────────
+    if np.all(np.isfinite(X)) and np.all(np.isfinite(Y)) and np.all(np.isfinite(Z)):
+        fig = plt.figure(figsize=(10, 8), facecolor='#0a0a1f')
+        ax = fig.add_subplot(111, projection='3d')
+        ax.set_facecolor('#0a0a1f')
+        ax.grid(False)
+        ax.set_axis_off()
+
+        colors = ['#88ffff', '#66e0e0', '#44cccc', '#22aaaa']
+        for i, col in enumerate(colors):
+            alpha_val = 0.15 + i * 0.1
+            lw = 2.0 + i * 0.5
+            ax.plot(X, Y, Z, lw=lw, color=col, alpha=alpha_val, zorder=10 - i)
+
+        ax.plot(X, Y, Z, lw=3.0, color='#88ffff', alpha=0.95, zorder=20)
+        ax.scatter(X[-1], Y[-1], Z[-1], s=100, color='#ffffcc', alpha=0.6, zorder=30)
+
+        ax.view_init(elev=25, azim=140)
+
+        # Safe limits
+        margin = 1.0
+        ax.set_xlim(np.nanmin(X) - margin, np.nanmax(X) + margin)
+        ax.set_ylim(np.nanmin(Y) - margin, np.nanmax(Y) + margin)
+        ax.set_zlim(np.nanmin(Z) - margin, np.nanmax(Z) + margin)
+
+        ax.set_title("Garx's Subliminal Resonance Attractor\n" + pattern_desc.split(':')[0],
+                     color='white', fontsize=14, pad=20)
+
+        plt.savefig('gsra_garx_pattern_static.png', dpi=150, bbox_inches='tight', facecolor='#0a0a1f')
+        print("Static artistic image saved as 'gsra_garx_pattern_static.png'")
+        print("→ Open the file in any image viewer.\n")
+
+        plt.show()  # Optional
+    else:
+        print("Skipping 3D plot: trajectory contains NaN/Inf values.\n")
+
+    # ───────────────────────────────────────────────
+    # Time-series diagnostics
+    # ───────────────────────────────────────────────
+    x = np.arange(n)
+    A = np.vstack([x, np.ones(n)]).T
+    m, c = np.linalg.lstsq(A, data, rcond=None)[0]
+
+    print(f"Linear trend slope:      {m:.4f} per step")
+    print(f"  → Total change:        {m * (n - 1):.1f} over {n} steps")
+
+    trend = c + m * x
+    residuals = data - trend
+    print(f"Residuals std:           {np.std(residuals):.2f}")
+    print(f"Autocorr of residuals (lag 1): {pearsonr(residuals[:-1], residuals[1:])[0]:.4f}")
+
+    print(f"Autocorr of differences (lag 1): {pearsonr(diffs[:-1], diffs[1:])[0]:.4f}")
+
+    print("\nForecast NEXT value (short-term):")
+    print(f"  • Persistence: {data[-1]:.2f}")
+    print(f"  • Linear extrapolation: {m * n + c:.2f}")
+    print(f"  • Blended (95% persistence): {0.95 * data[-1] + 0.05 * (m * n + c):.2f}")
